@@ -1,0 +1,544 @@
+"use client";
+
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Background,
+  BackgroundVariant,
+  ReactFlow,
+  SelectionMode,
+  addEdge,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  type Connection,
+  type Edge,
+  type Node,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { useBlockCatalog } from "@/components/block-catalog";
+import { useCanvasTool } from "@/components/canvas-tool";
+import { SidePanel, isScheduleBlock, type AttentionItem, type WorkflowDetails } from "@/components/SidePanel";
+import type { TriggerOption } from "@/components/TriggerMenu";
+import { MAX_ZOOM, MIN_ZOOM } from "@/components/ZoomSlider";
+import {
+  LoopNode,
+  WorkflowNode,
+  loopBlockData,
+  loopChildPosition,
+  loopFrame,
+  type BlockData,
+} from "@/components/WorkflowNode";
+import { WorkflowConnectionLine, WorkflowEdge, workflowEdgeCss } from "@/components/WorkflowEdge";
+
+type CanvasNode = Node<BlockData, "block" | "loop">;
+
+const nodeTypes = { block: WorkflowNode, loop: LoopNode };
+const edgeTypes = { flow: WorkflowEdge, loop: WorkflowEdge };
+const PANEL_CLEARANCE = 24;
+
+function absoluteX(node: Node<BlockData>, nodes: Node<BlockData>[]) {
+  let x = node.position.x;
+  let parentId = node.parentId;
+  const seen = new Set<string>();
+  while (parentId && !seen.has(parentId)) {
+    seen.add(parentId);
+    const parent = nodes.find((item) => item.id === parentId);
+    if (!parent) break;
+    x += parent.position.x;
+    parentId = parent.parentId;
+  }
+  return x;
+}
+
+function terminalNode(nodes: Node<BlockData>[], edges: Edge[]) {
+  const outgoing = new Set(edges.map((edge) => edge.source));
+  const open = nodes.filter((node) => !outgoing.has(node.id));
+  const pool = open.length > 0 ? open : nodes;
+  return pool.reduce((best, node) => (absoluteX(node, nodes) > absoluteX(best, nodes) ? node : best));
+}
+
+function blockIssue(data: BlockData, disconnected: boolean) {
+  const stored = data.status ?? "ok";
+  if (stored === "disabled") return "This block is disabled";
+  if (stored === "error") return data.summary.trim() || "This block has an error";
+  if (disconnected) return "This block is not connected";
+  if (stored === "configure") return "This block needs to be configured";
+  return null;
+}
+
+function KeepInView({
+  nodeCount,
+  selectedId,
+  collapsed,
+}: {
+  nodeCount: number;
+  selectedId: string | null;
+  collapsed: boolean;
+}) {
+  const { getViewport, setViewport } = useReactFlow();
+
+  useLayoutEffect(() => {
+    let frame = 0;
+    let tries = 0;
+
+    const tick = () => {
+      if (!selectedId) return;
+      const panel = document.querySelector("[data-canvas-panel]")?.getBoundingClientRect();
+      const blocks = [...document.querySelectorAll<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(selectedId)}"]`)];
+      if (!panel || blocks.length === 0 || blocks.some((block) => block.getBoundingClientRect().width === 0)) {
+        if (tries++ < 12) frame = requestAnimationFrame(tick);
+        return;
+      }
+
+      const limit = panel.left - PANEL_CLEARANCE;
+      let shiftX = 0;
+      for (const block of blocks) {
+        const rect = block.getBoundingClientRect();
+        const overlaps = rect.bottom > panel.top && rect.top < panel.bottom && rect.right > limit;
+        if (overlaps) shiftX = Math.min(shiftX, limit - rect.right);
+      }
+
+      const focusSelected = () => {
+        if (!selectedId) return;
+        document
+          .querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(selectedId)}"]`)
+          ?.focus({ preventScroll: true });
+      };
+      focusSelected();
+
+      if (shiftX === 0) return;
+      const viewport = getViewport();
+      const zoom = viewport.zoom || 1;
+      void setViewport(
+        { x: viewport.x + shiftX / zoom, y: viewport.y, zoom },
+        { duration: 380, interpolate: "smooth" },
+      ).then(focusSelected);
+    };
+
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [nodeCount, selectedId, collapsed, getViewport, setViewport]);
+
+  return null;
+}
+
+const initialNodes: Node<BlockData, "block">[] = [
+  {
+    id: "quote-signed",
+    type: "block",
+    position: { x: 0, y: 0 },
+    data: {
+      title: "Quote signed",
+      summary: "Any amount",
+      trigger: true,
+      status: "ok",
+    },
+  },
+];
+
+const initialEdges: Edge[] = [];
+
+export function WorkflowCanvas({
+  seed,
+  revealed = false,
+  onReveal,
+  onNameChange,
+}: {
+  revealed?: boolean;
+  onReveal?: () => void;
+  onNameChange?: (name: string) => void;
+  seed?: {
+    name: string;
+    description: string;
+    nodes: Node<BlockData, "block">[];
+    edges: Edge[];
+    prompt?: string;
+    lines?: string[];
+  };
+}) {
+  const { tool } = useCanvasTool();
+  const { open: catalogOpen, show: showCatalog, hide: hideCatalog } = useBlockCatalog();
+  const { getViewport, setViewport } = useReactFlow();
+  const selecting = tool === "cursor";
+  const staged = Boolean(seed?.lines?.length);
+  const seedRef = useRef(seed);
+  seedRef.current = seed;
+  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(staged ? [] : (seed?.nodes ?? initialNodes));
+  const [edges, setEdges, onEdgesChange] = useEdgesState(staged ? [] : (seed?.edges ?? initialEdges));
+  const [collapsed, setCollapsed] = useState(false);
+  const [workflow, setWorkflow] = useState<WorkflowDetails>({
+    name: seed?.name ?? "Overdue invoice reminders",
+    description: seed?.description ?? "Remind customers when an invoice is late",
+  });
+  const onNameChangeRef = useRef(onNameChange);
+  onNameChangeRef.current = onNameChange;
+  useEffect(() => {
+    onNameChangeRef.current?.(workflow.name);
+  }, [workflow.name]);
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      setEdges((current) => addEdge(connection, current));
+    },
+    [setEdges],
+  );
+  useEffect(() => {
+    const current = seedRef.current;
+    if (!revealed || !current?.lines?.length) return;
+    setNodes(current.nodes);
+    setEdges(current.edges);
+    const frame = requestAnimationFrame(() => {
+      const pane = document.querySelector(".react-flow")?.getBoundingClientRect();
+      const y = pane ? Math.max(48, (pane.height - 64) / 2) : 120;
+      void setViewport({ x: 72, y, zoom: 1 }, { duration: 0 });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [revealed, setNodes, setEdges, setViewport]);
+  const onPaneClick = useCallback(() => {
+    setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)));
+    hideCatalog();
+  }, [setNodes, hideCatalog]);
+  const selected = nodes.filter((node) => node.selected);
+  const active = selected.length === 1 ? selected[0] : null;
+  const attention = useMemo<AttentionItem[]>(() => {
+    return nodes.flatMap((node) => {
+      const incoming = edges.some((edge) => edge.target === node.id);
+      const outgoing = edges.some((edge) => edge.source === node.id);
+      const stored = node.data.status;
+      if (stored === "disabled") return [];
+      const disconnected = node.parentId ? false : node.data.trigger ? !outgoing : !incoming;
+      const tone = stored === "error" ? "error" : stored === "configure" || disconnected ? "configure" : null;
+      if (!tone) return [];
+      return [
+        {
+          id: node.id,
+          data: node.data,
+          tone,
+          detail: stored === "error" || stored === "configure" ? node.data.summary : "Not connected",
+        },
+      ];
+    });
+  }, [nodes, edges]);
+  const updateBlock = useCallback(
+    (patch: Partial<BlockData>) => {
+      if (!active) return;
+      setNodes((current) =>
+        current.map((node) => {
+          if (node.id !== active.id) return node;
+          const data = { ...node.data, ...patch };
+          if (isScheduleBlock(data) && (patch.frequency !== undefined || patch.time !== undefined || patch.timezone !== undefined)) {
+            if (data.frequency && data.time) data.summary = `${data.frequency} at ${data.time}`;
+          }
+          return { ...node, data };
+        }),
+      );
+    },
+    [active, setNodes],
+  );
+  const selectBlock = useCallback(
+    (id: string) => {
+      setNodes((current) =>
+        current.map((node) => ({
+          ...node,
+          selected: node.id === id,
+          className: node.id === id ? "attention-focus" : undefined,
+        })),
+      );
+    },
+    [setNodes],
+  );
+  useEffect(() => {
+    setNodes((current) => {
+      if (!current.some((node) => node.className === "attention-focus" && node.id !== active?.id)) return current;
+      return current.map((node) =>
+        node.className === "attention-focus" && node.id !== active?.id ? { ...node, className: undefined } : node,
+      );
+    });
+  }, [active?.id, setNodes]);
+  useEffect(() => {
+    if (catalogOpen) setCollapsed(false);
+  }, [catalogOpen]);
+  const selectedId = active?.id ?? null;
+  const selectedBefore = useRef(selectedId);
+  useEffect(() => {
+    if (selectedId && selectedId !== selectedBefore.current) setCollapsed(false);
+    selectedBefore.current = selectedId;
+  }, [selectedId]);
+  const onNodeClick = useCallback(() => setCollapsed(false), []);
+  useEffect(() => {
+    hideCatalog();
+  }, [active?.id, hideCatalog]);
+  useEffect(() => {
+    const loops = nodes.filter((node) => node.type === "loop");
+    if (loops.length === 0) return;
+
+    let nextNodes = nodes;
+    let nodesChanged = false;
+    let nextEdges = edges;
+    let edgesChanged = false;
+
+    for (const loop of loops) {
+      const children = nextNodes
+        .filter((node) => node.parentId === loop.id)
+        .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
+      const frame = loopFrame(children.length);
+      const width = Number.parseFloat(String(loop.style?.width ?? 0));
+      const height = Number.parseFloat(String(loop.style?.height ?? 0));
+      if (Math.abs(width - frame.width) < 0.5 && Math.abs(height - frame.height) < 0.5) continue;
+
+      nodesChanged = true;
+      const indexById = new Map(children.map((child, index) => [child.id, index]));
+      nextNodes = nextNodes.map((node) => {
+        if (node.id === loop.id) return { ...node, style: { ...node.style, width: frame.width, height: frame.height } };
+        const index = indexById.get(node.id);
+        if (index === undefined) return node;
+        return { ...node, position: loopChildPosition(index) };
+      });
+      for (let index = 0; index < children.length - 1; index += 1) {
+        const source = children[index].id;
+        const target = children[index + 1].id;
+        if (nextEdges.some((edge) => edge.source === source && edge.target === target)) continue;
+        edgesChanged = true;
+        nextEdges = [...nextEdges, { id: `e-${source}-${target}`, source, target, type: "flow" }];
+      }
+    }
+
+    if (nodesChanged) setNodes(nextNodes);
+    if (edgesChanged) setEdges(nextEdges);
+  }, [nodes, edges, setNodes, setEdges]);
+  const addBlock = useCallback(
+    (option: TriggerOption) => {
+      const source = active ?? terminalNode(nodes, edges);
+      const nextId = crypto.randomUUID();
+      const blockData = {
+        title: option.title,
+        summary: option.description,
+        input: true,
+        status: "ok" as const,
+        icon: option.icon,
+        tone: option.tone,
+        trigger: option.trigger,
+      };
+      const loopId = source.type === "loop" ? source.id : source.parentId;
+
+      if (option.title === "Loop") {
+        const anchor = source.parentId ? (nodes.find((node) => node.id === source.parentId) ?? source) : source;
+        const anchorWidth = anchor.type === "loop" ? Number(anchor.style?.width ?? loopFrame(0).width) : 0;
+        setNodes((current) => [
+          ...current.map((node) => ({ ...node, selected: false, className: undefined })),
+          {
+            id: nextId,
+            type: "loop" as const,
+            position: {
+              x: anchor.position.x + (anchor.type === "loop" ? anchorWidth + 80 : 320),
+              y: anchor.position.y,
+            },
+            style: loopFrame(0),
+            selected: true,
+            data: loopBlockData(),
+          },
+        ]);
+        setEdges((current) => [
+          ...current.filter((edge) => edge.source !== anchor.id),
+          { id: `e-${anchor.id}-${nextId}`, source: anchor.id, target: nextId, type: "flow" },
+        ]);
+        hideCatalog();
+        return;
+      }
+
+      if (loopId) {
+        const siblings = nodes.filter((node) => node.parentId === loopId);
+        const frame = loopFrame(siblings.length + 1);
+        const tail = [...siblings].reverse().find((node) => !edges.some((edge) => edge.source === node.id));
+        setNodes((current) => [
+          ...current.map((node) =>
+            node.id === loopId
+              ? { ...node, selected: false, className: undefined, style: frame }
+              : { ...node, selected: false, className: undefined },
+          ),
+          {
+            id: nextId,
+            type: "block" as const,
+            parentId: loopId,
+            position: loopChildPosition(siblings.length),
+            selected: true,
+            data: blockData,
+          },
+        ]);
+        setEdges((current) =>
+          tail
+            ? [
+                ...current.filter((edge) => edge.source !== tail.id),
+                { id: `e-${tail.id}-${nextId}`, source: tail.id, target: nextId, type: "flow" },
+              ]
+            : current,
+        );
+        hideCatalog();
+        return;
+      }
+
+      const zoom = getViewport().zoom || 1;
+      const nodeEl = document.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(source.id)}"]`);
+      const cardEl = nodeEl?.querySelector<HTMLElement>("span.relative");
+      const cardShift =
+        nodeEl && cardEl ? (cardEl.getBoundingClientRect().top - nodeEl.getBoundingClientRect().top) / zoom : 0;
+      let x = source.position.x + 320;
+      const y = source.position.y + cardShift;
+      while (nodes.some((node) => Math.abs(node.position.x - x) < 80 && Math.abs(node.position.y - y) < 40)) x += 320;
+      setNodes((current) => [
+        ...current.map((node) => ({ ...node, selected: false, className: undefined })),
+        {
+          id: nextId,
+          type: "block" as const,
+          position: { x, y },
+          selected: true,
+          data: blockData,
+        },
+      ]);
+      setEdges((current) => [
+        ...current.filter((edge) => edge.source !== source.id),
+        { id: `e-${source.id}-${nextId}`, source: source.id, target: nextId, type: "flow" },
+      ]);
+      hideCatalog();
+    },
+    [active, nodes, edges, getViewport, setNodes, setEdges, hideCatalog],
+  );
+
+  return (
+    <div className="absolute inset-0">
+      <style>{`${workflowEdgeCss}
+        .react-flow.tool-pointer .react-flow__pane,
+        .react-flow.tool-pointer .react-flow__pane.selection,
+        .react-flow.tool-pointer .react-flow__node,
+        .react-flow.tool-pointer .react-flow__node.selectable,
+        .react-flow.tool-pointer .react-flow__node.draggable,
+        .react-flow.tool-pointer .react-flow__node.draggable.dragging,
+        .react-flow.tool-pointer .react-flow__nodesselection-rect,
+        .react-flow.tool-pointer .cursor-grab,
+        .react-flow.tool-pointer .cursor-grab:active {
+          cursor: default;
+        }
+        .react-flow.tool-pointer .react-flow__node:hover,
+        .react-flow.tool-pointer .react-flow__node:hover .cursor-grab,
+        .react-flow.tool-pointer .react-flow__node button,
+        .react-flow.tool-pointer .react-flow__edge.selectable:hover {
+          cursor: pointer;
+        }
+        .react-flow.tool-pointer .react-flow__handle {
+          cursor: crosshair;
+        }
+        .react-flow.tool-hand .react-flow__node {
+          pointer-events: all !important;
+          cursor: grab;
+        }
+        .react-flow.tool-hand .react-flow__node:active,
+        .react-flow.tool-hand .cursor-grab:active {
+          cursor: grabbing;
+        }
+        .react-flow__node:focus,
+        .react-flow__node:focus-visible,
+        .react-flow__nodesselection-rect,
+        .react-flow__nodesselection-rect:focus,
+        .react-flow__nodesselection-rect:focus-visible {
+          outline: none;
+        }
+        .react-flow__nodesselection-rect {
+          border: none;
+          background: transparent;
+        }
+        .react-flow__node {
+          overflow: visible;
+        }
+        .react-flow__node.attention-focus span.h-16 {
+          outline: none;
+          border-color: #95c3ee !important;
+          box-shadow: 0 0 0 2px #95c3ee !important;
+        }
+        @keyframes loop-stroke-travel {
+          from { stroke-dashoffset: var(--loop-phase, 0px); }
+          to { stroke-dashoffset: calc(var(--loop-phase, 0px) + var(--loop-travel)); }
+        }
+        .loop-stroke-travel {
+          animation: loop-stroke-travel 3s linear 1 forwards;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .loop-stroke-travel { animation: none; }
+        }
+      `}</style>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onPaneClick={onPaneClick}
+        onNodeClick={onNodeClick}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        fitView={!staged}
+        fitViewOptions={{ minZoom: 1, maxZoom: 1 }}
+        minZoom={MIN_ZOOM / 100}
+        maxZoom={MAX_ZOOM / 100}
+        panOnScroll
+        zoomOnPinch
+        zoomOnScroll={false}
+        zoomOnDoubleClick={false}
+        panOnDrag={!selecting}
+        selectionOnDrag={selecting}
+        selectionMode={SelectionMode.Partial}
+        nodesDraggable
+        nodesConnectable={selecting}
+        elementsSelectable
+        deleteKeyCode={["Backspace", "Delete"]}
+        colorMode="light"
+        className={selecting ? "tool-pointer bg-transparent" : "tool-hand bg-transparent"}
+        proOptions={{ hideAttribution: true }}
+        defaultEdgeOptions={{ type: "flow" }}
+        connectionLineComponent={WorkflowConnectionLine}
+      >
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={12}
+          color="rgb(145 145 154 / 75%)"
+          bgColor="var(--surface-su-body)"
+        />
+        <KeepInView nodeCount={nodes.length} selectedId={active?.id ?? null} collapsed={collapsed} />
+      </ReactFlow>
+      <SidePanel
+        collapsed={collapsed}
+        onToggleCollapsed={() => setCollapsed((open) => !open)}
+        workflow={workflow}
+        onWorkflowChange={(patch) => setWorkflow((current) => ({ ...current, ...patch }))}
+        attention={attention}
+        onSelectBlock={selectBlock}
+        block={active ? { id: active.id, data: active.data } : null}
+        issue={
+          active
+            ? blockIssue(
+                active.data,
+                active.parentId
+                  ? false
+                  : active.data.trigger
+                    ? !edges.some((edge) => edge.source === active.id)
+                    : !edges.some((edge) => edge.target === active.id),
+              )
+            : null
+        }
+        onBlockChange={updateBlock}
+        catalog={catalogOpen}
+        nextLabel={
+          active
+            ? (nodes.find((node) => node.id === edges.find((edge) => edge.source === active.id)?.target)?.data.title ??
+              null)
+            : null
+        }
+        onOpenCatalog={showCatalog}
+        onCloseCatalog={hideCatalog}
+        onPickBlock={addBlock}
+        assistant={
+          seed?.prompt && seed.lines?.length ? { prompt: seed.prompt, lines: seed.lines } : null
+        }
+        onAssistantDone={onReveal}
+      />
+    </div>
+  );
+}

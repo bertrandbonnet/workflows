@@ -1,26 +1,119 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* surface */
+  --surface-su-body: #fcfcfc;
+  --surface-su-main: #fcfcfc;
+  --surface-su-light-elevation: #ffffff;
+  --surface-su-sidebar: #f6f5f3;
+  /* grey/foreground */
+  --grey-fg-primary: #44403c;
+  --grey-fg-secondary: #78716c;
+  --grey-fg-tertiary: #999390;
+  --grey-fg-disabled: #c3bfbc;
+  /* grey/background */
+  --grey-bg-action: #ffffff;
+  --grey-bg-action-hover: #f5f5f4;
+  --grey-bg-disabled: #f1efee;
+  --grey-bg-1: #fafaf9;
+  --grey-bg-2: #f8f7f7;
+  --grey-bg-3: #f3f2f1;
+  --grey-bg-4: #eceae9;
+  /* grey/border */
+  --grey-bo-1: #eeeceb;
+  --grey-bo-2: #e2dfdd;
+  --grey-bo-3: #dbd8d6;
+  --grey-bo-3-hover: #cfccc8;
+  /* blue/background */
+  --blue-bg-accent: #1f74c6;
+  --blue-bg-accent-hover: #1960a2;
+  --blue-fg-accent: #1f74c6;
+  --blue-bg-2: #f1f4f8;
+  --blue-bg-3: #e3eaf1;
+  --blue-bg-5: #7ea6cc;
+  /* red/foreground */
+  --red-fg-accent: #c92a2a;
+  /* orange/foreground */
+  --orange-fg-accent: #d97040;
+  --orange-bg-2: #fdf7f4;
+  --orange-bg-3: #f8ebe4;
+  --orange-bo-3: #f0cfc0;
+  --purple-bg-3: #ede8f5;
+  --yellow-bg-3: #f9f0d8;
+  --pink-bg-3: #f0e0ea;
+  --turquoise-bg-3: #daeef2;
+  --white: #ffffff;
+  /* ⌴ spacing */
+  --spacing-1: 4px;
+  --spacing-1-5: 6px;
+  --spacing-2: 8px;
+  --spacing-2-5: 10px;
+  --spacing-3: 12px;
+  /* ⎅ padding */
+  --padding-2: 8px;
+  --padding-3: 12px;
+  /* ⇱ rounded */
+  --rounded-sm: 6px;
+  --rounded-md: 8px;
+  --rounded-lg: 12px;
+  --rounded-full: 999px;
+  /* ✼ icon */
+  --icon-small: 14px;
+  --icon-regular: 16px;
+  /* shadow/light/xs */
+  --shadow-light-xs: 0 1px 2px -1px rgb(28 25 23 / 1.96%);
+  /* shadow/light/sm — #1C191708 */
+  --shadow-light-sm: 0 2px 4px -2px #1c191708, 0 1px 2px -1px #1c191708;
+  /* shadow/light/md */
+  --shadow-light-md: 0 16px 32px -8px #1c19170f, 0 8px 16px -4px #1c19170a,
+    0 4px 8px -2px #1c191708, 0 2px 4px -1px #1c191708, 0 1px 2px 0 #1c19170a;
+  /* 🍦 bold/large */
+  --text-bold-large-size: 14px;
+  --text-bold-large-leading: 20px;
+  --text-bold-large-tracking: -0.015em;
+  /* 🍦 bold/base */
+  --text-bold-base-size: 13px;
+  --text-bold-base-leading: 18px;
+  --text-bold-base-tracking: -0.015em;
+  /* 🍦 bold/small */
+  --text-bold-small-size: 12px;
+  --text-bold-small-leading: 16px;
+  --text-bold-small-tracking: -0.015em;
+  /* 🍦 regular/base */
+  --text-regular-base-size: 13px;
+  --text-regular-base-leading: 18px;
+  --text-regular-base-tracking: -0.015em;
+  /* 🍦 bold/tiny */
+  --text-bold-tiny-size: 11px;
+  --text-bold-tiny-leading: 14px;
+  --text-bold-tiny-tracking: -0.015em;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-background: var(--surface-su-body);
+  --color-foreground: var(--grey-fg-primary);
+  --color-su-body: var(--surface-su-body);
+  --color-su-main: var(--surface-su-main);
+  --color-su-light-elevation: var(--surface-su-light-elevation);
+  --color-fg-primary: var(--grey-fg-primary);
+  --color-fg-secondary: var(--grey-fg-secondary);
+  --color-fg-disabled: var(--grey-fg-disabled);
+  --color-bg-action: var(--grey-bg-action);
+  --color-bg-action-hover: var(--grey-bg-action-hover);
+  --color-bg-disabled: var(--grey-bg-disabled);
+  --color-bo-2: var(--grey-bo-2);
+  --color-bo-3: var(--grey-bo-3);
+  --color-bo-3-hover: var(--grey-bo-3-hover);
+  --color-bg-accent: var(--blue-bg-accent);
+  --color-bg-accent-hover: var(--blue-bg-accent-hover);
+  --color-white: var(--white);
+  --font-sans: var(--font-inter), sans-serif;
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --radius-full: var(--rounded-full);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--surface-su-body);
+  color: var(--grey-fg-primary);
+  font-family: var(--font-sans), sans-serif;
 }
