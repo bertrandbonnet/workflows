@@ -27,6 +27,7 @@ import {
   blockDisconnected,
   blockHeight,
   blockOutputs,
+  edgeUsesOutput,
   loopBlockData,
   loopChildPosition,
   loopFrame,
@@ -508,8 +509,9 @@ export function WorkflowCanvas({
       const sourceHandle = outputs
         ? outputs.some((output) => output.id === requested)
           ? requested
-          : (outputs.find((output) => !edges.some((edge) => edge.source === source.id && edge.sourceHandle === output.id))?.id ??
-            outputs[0]?.id)
+          : (outputs.find(
+              (output) => !edges.some((edge) => edge.source === source.id && edgeUsesOutput(edge, output.id, outputs)),
+            )?.id ?? outputs[0]?.id)
         : undefined;
 
       if (option.title === "Loop") {
@@ -604,7 +606,9 @@ export function WorkflowCanvas({
         },
       ]);
       setEdges((current) => [
-        ...current.filter((edge) => edge.source !== source.id || (sourceHandle ? edge.sourceHandle !== sourceHandle : false)),
+        ...current.filter(
+          (edge) => edge.source !== source.id || (sourceHandle ? !edgeUsesOutput(edge, sourceHandle, outputs!) : false),
+        ),
         { id: `e-${source.id}-${nextId}`, source: source.id, sourceHandle, target: nextId, type: "flow" },
       ]);
       hideCatalog();
@@ -745,8 +749,14 @@ export function WorkflowCanvas({
             ? Object.fromEntries(
                 blockOutputs(active.data)!.map((output) => [
                   output.id,
-                  nodes.find((node) => node.id === edges.find((edge) => edge.source === active.id && edge.sourceHandle === output.id)?.target)
-                    ?.data.title ?? null,
+                  nodes.find(
+                    (node) =>
+                      node.id ===
+                      edges.find(
+                        (edge) =>
+                          edge.source === active.id && edgeUsesOutput(edge, output.id, blockOutputs(active.data)!),
+                      )?.target,
+                  )?.data.title ?? null,
                 ]),
               )
             : null

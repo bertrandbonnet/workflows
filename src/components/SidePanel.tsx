@@ -111,13 +111,34 @@ function filled(config: Record<string, string>, keys: string[]) {
   return keys.map((key) => config[key]?.trim()).filter(Boolean).join(" · ");
 }
 
+const INVOICE_STATUSES: Array<{ value: string; icon: string }> = [
+  { value: "Unpaid", icon: "/block-icons/clock.svg" },
+  { value: "Overdue", icon: "/block-icons/clock-clockwise.svg" },
+  { value: "Paid", icon: "/block-icons/check-circle.svg" },
+  { value: "Draft", icon: "/block-icons/pencil-simple.svg" },
+  { value: "Void", icon: "/block-icons/stop-circle.svg" },
+];
+
 const BLOCK_SETUPS: Record<string, BlockSetup> = {
   Switch: {
     fields: [{ key: "value", label: "Match", placeholder: "The value to compare" }],
     summary: (config) => config.value?.trim() ?? "",
   },
   "For each": {
-    fields: [{ key: "list", label: "For each", placeholder: "Unpaid invoices", options: ["Unpaid invoices", "Customers", "Subscriptions", "Quotes"] }],
+    fields: [
+      {
+        key: "list",
+        label: "For each",
+        placeholder: "Unpaid invoices",
+        greyIcons: true,
+        options: [
+          { value: "Unpaid invoices", icon: "/shell/file-text.svg" },
+          { value: "Customers", icon: "/shell/users-three.svg" },
+          { value: "Subscriptions", icon: "/shell/arrows-clockwise.svg" },
+          { value: "Quotes", icon: "/shell/notepad.svg" },
+        ],
+      },
+    ],
     summary: (config) => (config.list ? `Each ${config.list.toLowerCase()}` : ""),
   },
   Loop: {
@@ -342,26 +363,33 @@ function BlockActions({
 
   function set(key: string, value: string) {
     const config = { ...data.config, [key]: value };
+    if (data.title === "Find records" && key === "record" && value === "Invoices") {
+      const known = INVOICE_STATUSES.some((option) => option.value === config.filter);
+      if (config.filter && !known) delete config.filter;
+    }
     const summary = setup.summary(config);
     onChange(summary ? { config, summary } : { config });
   }
 
   return (
     <div className="flex flex-col gap-4 border-b-[0.5px] border-solid border-[var(--grey-bo-2,#e2dfdd)] p-4">
-      {setup.fields.map((field) => (
-        <Field key={field.key} label={field.label}>
+      {setup.fields.map((field) => {
+        const invoiceStatus = data.title === "Find records" && field.key === "filter" && data.config?.record === "Invoices";
+        const options = invoiceStatus ? INVOICE_STATUSES : field.options;
+        return (
+        <Field key={field.key} label={invoiceStatus ? "Status" : field.label}>
           {field.area ? (
             <PromptControl
               value={data.config?.[field.key] ?? ""}
               placeholder={field.placeholder}
               onChange={(value) => set(field.key, value)}
             />
-          ) : field.options ? (
+          ) : options ? (
             <Dropdown
               value={data.config?.[field.key] ?? ""}
-              placeholder={field.placeholder}
-              greyIcons={field.greyIcons}
-              options={field.options.map(setupOption)}
+              placeholder={invoiceStatus ? "Choose a status" : field.placeholder}
+              greyIcons={field.greyIcons || invoiceStatus}
+              options={options.map(setupOption)}
               onChange={(value) => set(field.key, value)}
             />
           ) : (
@@ -372,7 +400,8 @@ function BlockActions({
             />
           )}
         </Field>
-      ))}
+        );
+      })}
       {data.title === "Switch" ? <SwitchCases data={data} onChange={onChange} /> : null}
     </div>
   );

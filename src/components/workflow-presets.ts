@@ -1,6 +1,6 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { BlockIconName, BlockTone } from "@/components/TriggerMenu";
-import type { BlockData } from "@/components/WorkflowNode";
+import { blockOutputs, type BlockData } from "@/components/WorkflowNode";
 
 export type TemplateFamily = "paid" | "customers" | "team" | "data";
 
@@ -53,6 +53,7 @@ function chain(
     id: `e-${id}-${index}`,
     source: `${id}-${index}`,
     target: `${id}-${index + 1}`,
+    sourceHandle: blockOutputs({ title: steps[index].title })?.[0]?.id,
     type: "flow",
   }));
   return { nodes, edges };
@@ -91,13 +92,13 @@ function morningCheck(): Pick<WorkflowPreset, "nodes" | "edges"> {
         position: { x: 320, y: 20 },
         data: {
           title: "Find records",
-          summary: "Invoices · Unpaid and past due",
+          summary: "Invoices · Unpaid",
           description: "The invoices this run walks through, one customer at a time.",
           input: true,
           status: "ok",
           icon: "magnifying-glass",
           tone: "orange",
-          config: { record: "Invoices", filter: "Unpaid and past due" },
+          config: { record: "Invoices", filter: "Unpaid" },
         },
       },
       {

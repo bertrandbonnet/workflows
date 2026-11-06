@@ -82,6 +82,15 @@ export function switchCases(raw: string | undefined): SwitchCase[] {
   ];
 }
 
+export function edgeUsesOutput(
+  edge: { sourceHandle?: string | null },
+  outputId: string,
+  outputs: BlockOutput[],
+) {
+  if (edge.sourceHandle) return edge.sourceHandle === outputId;
+  return outputs[0]?.id === outputId;
+}
+
 export function blockOutputs(data: Pick<BlockData, "title" | "config">): BlockOutput[] | null {
   if (data.title === "If / else") {
     return [
@@ -213,22 +222,22 @@ function NodeHandle({
   type,
   position,
   id,
+  connected,
 }: {
   type: "source" | "target";
   position: Position;
   id?: string;
+  connected?: boolean;
 }) {
   const connections = useNodeConnections(id ? { handleType: type, handleId: id } : { handleType: type });
+  const filled = type === "source" && (connected || connections.length > 0);
 
   return (
     <Handle
       id={id}
       type={type}
       position={position}
-      className={cn(
-        type === "target" ? "node-handle-target" : "node-handle",
-        type === "source" && connections.length > 0 && "connected",
-      )}
+      className={cn(type === "target" ? "node-handle-target" : "node-handle", filled && "connected")}
     />
   );
 }
@@ -568,8 +577,8 @@ export function WorkflowNode({ id, data, selected }: NodeProps<BlockNode>) {
     const current = getNode(id);
     const handleId = outputs && menuHandle ? menuHandle : undefined;
     if (!current) return;
-    if (handleId) {
-      if (outgoing.some((connection) => connection.sourceHandle === handleId)) return;
+    if (handleId && outputs) {
+      if (outgoing.some((connection) => edgeUsesOutput(connection, handleId, outputs))) return;
     } else if (outgoing.length > 0) return;
 
     const nextId = crypto.randomUUID();
@@ -794,7 +803,7 @@ export function WorkflowNode({ id, data, selected }: NodeProps<BlockNode>) {
           {outputs ? (
             <span className="flex w-full flex-col border-t-[0.5px] border-solid border-[var(--grey-bo-1,#eeeceb)] py-1">
               {outputs.map((output) => {
-                const connected = outgoing.some((connection) => connection.sourceHandle === output.id);
+                const connected = outgoing.some((connection) => edgeUsesOutput(connection, output.id, outputs));
                 return (
                   <span
                     key={output.id}
@@ -808,7 +817,7 @@ export function WorkflowNode({ id, data, selected }: NodeProps<BlockNode>) {
                     >
                       {output.label}
                     </span>
-                    <NodeHandle type="source" position={Position.Right} id={output.id} />
+                    <NodeHandle type="source" position={Position.Right} id={output.id} connected={connected} />
                     {connected ? null : (
                       <span className="nodrag nopan pointer-events-auto absolute top-1/2 left-[calc(100%-8px)] z-0 flex h-7 -translate-y-1/2 items-center pr-4 pl-6">
                         <button

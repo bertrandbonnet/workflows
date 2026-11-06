@@ -1,5 +1,13 @@
 import type { Edge, Node } from "@xyflow/react";
-import { blockDisconnected, blockHeight, blockOutputs, loopChildPosition, loopFrameFor, type BlockData } from "@/components/WorkflowNode";
+import {
+  blockDisconnected,
+  blockHeight,
+  blockOutputs,
+  edgeUsesOutput,
+  loopChildPosition,
+  loopFrameFor,
+  type BlockData,
+} from "@/components/WorkflowNode";
 
 const NODE_W = 240;
 const GAP_X = 80;
@@ -76,6 +84,7 @@ function outputsOf(node: GraphNode) {
 function handleIndex(node: GraphNode, handle: string | null | undefined) {
   const outputs = outputsOf(node);
   if (!outputs?.length) return 0;
+  if (!handle) return 0;
   const index = outputs.findIndex((output) => output.id === handle);
   return index < 0 ? outputs.length : index;
 }
@@ -370,9 +379,9 @@ export function blocksNeedFix(nodes: GraphNode[], edges: Edge[]) {
 function freeOutputs(node: GraphNode, edges: Edge[]) {
   if (node.data.title === "Stop") return [];
   const outputs = outputsOf(node);
-  const used = new Set(edges.filter((edge) => edge.source === node.id).map((edge) => edge.sourceHandle ?? ""));
-  if (!outputs) return used.has("") ? [] : [undefined];
-  return outputs.filter((output) => !used.has(output.id)).map((output) => output.id);
+  const fromNode = edges.filter((edge) => edge.source === node.id);
+  if (!outputs) return fromNode.length > 0 ? [] : [undefined];
+  return outputs.filter((output) => !fromNode.some((edge) => edgeUsesOutput(edge, output.id, outputs))).map((output) => output.id);
 }
 
 function reaches(edges: Edge[], from: string, to: string, seen = new Set<string>()): boolean {
