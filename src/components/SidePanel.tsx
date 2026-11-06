@@ -6,7 +6,7 @@ import { Button } from "@/components/Button";
 import { Dropdown, GreyIcon } from "@/components/Dropdown";
 import { FloatingPanel } from "@/components/FloatingPanel";
 import { TabSelector } from "@/components/TabSelector";
-import { ArrowLeft, CaretDown, Package, Plus, Sparkle, Trash, Warning, WarningCircle, X } from "@/components/icons";
+import { ArrowLeft, CaretDown, Package, Plus, Trash, Warning, WarningCircle, X } from "@/components/icons";
 import { BlockGlyph, TriggerMenu, type BlockTone, type TriggerOption } from "@/components/TriggerMenu";
 import { AssistantThread } from "@/components/WorkflowBuild";
 import { blockOutputs, switchCases, type BlockData } from "@/components/WorkflowNode";
@@ -85,13 +85,22 @@ function primaryLabel(data: BlockData) {
   return "Summary";
 }
 
+type SetupChoice = string | { value: string; icon?: string };
+
 type SetupField = {
   key: string;
   label: string;
   placeholder: string;
-  options?: string[];
+  options?: SetupChoice[];
+  greyIcons?: boolean;
   area?: boolean;
 };
+
+function setupOption(option: SetupChoice) {
+  return typeof option === "string"
+    ? { value: option, label: option }
+    : { value: option.value, label: option.value, icon: option.icon };
+}
 
 type BlockSetup = {
   fields: SetupField[];
@@ -143,7 +152,18 @@ const BLOCK_SETUPS: Record<string, BlockSetup> = {
   },
   "Find records": {
     fields: [
-      { key: "record", label: "Look for", placeholder: "Choose a record", options: ["Invoices", "Customers", "Subscriptions", "Quotes"] },
+      {
+        key: "record",
+        label: "Look for",
+        placeholder: "Choose a record",
+        greyIcons: true,
+        options: [
+          { value: "Invoices", icon: "/shell/file-text.svg" },
+          { value: "Customers", icon: "/shell/users-three.svg" },
+          { value: "Subscriptions", icon: "/shell/arrows-clockwise.svg" },
+          { value: "Quotes", icon: "/shell/notepad.svg" },
+        ],
+      },
       { key: "filter", label: "Matching", placeholder: "Unpaid" },
     ],
     summary: (config) => filled(config, ["record", "filter"]),
@@ -340,7 +360,8 @@ function BlockActions({
             <Dropdown
               value={data.config?.[field.key] ?? ""}
               placeholder={field.placeholder}
-              options={field.options.map((option) => ({ value: option, label: option }))}
+              greyIcons={field.greyIcons}
+              options={field.options.map(setupOption)}
               onChange={(value) => set(field.key, value)}
             />
           ) : (
@@ -934,7 +955,7 @@ export function SidePanel({
                 onChange={setPanelTab}
                 options={[
                   { value: "details", label: "Details" },
-                  { value: "assistant", label: "Assistant", icon: <Sparkle /> },
+                  { value: "assistant", label: "Assistant" },
                 ]}
               />
             </div>

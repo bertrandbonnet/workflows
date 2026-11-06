@@ -28,6 +28,7 @@ const motion = `
   color: transparent;
   animation: panel-shine 1.8s cubic-bezier(0.4, 0, 0.2, 1) 1 both;
 }
+.panel-shine-fast { animation-duration: 0.8s; }
 @keyframes panel-check-in {
   from { opacity: 0; transform: scale(0.7); }
   to { opacity: 1; transform: none; }
@@ -72,6 +73,7 @@ export function AssistantThread({
     if (!block || block.kind !== "steps") return;
     const expected = block.settled;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const preset = block.report;
     const timer = window.setTimeout(() => {
       setBlocks((current) =>
         current.map((item) => {
@@ -79,7 +81,7 @@ export function AssistantThread({
           return { ...item, settled: item.settled + 1 };
         }),
       );
-    }, reduced ? 180 : 2200);
+    }, reduced ? (preset ? 120 : 180) : preset ? 1000 : 2200);
     return () => window.clearTimeout(timer);
   }, [blocks]);
 
@@ -92,7 +94,7 @@ export function AssistantThread({
       if (reported.current) return;
       reported.current = true;
       onDoneRef.current();
-    }, reduced ? 160 : 900);
+    }, reduced ? 120 : 400);
     return () => window.clearTimeout(timer);
   }, [blocks]);
 
@@ -165,7 +167,7 @@ export function AssistantThread({
                         markPlayed(lineId);
                         finishStep(block.key, index);
                       } : undefined}
-                      className={`text-[length:var(--text-regular-base-size)] leading-[var(--text-regular-base-leading)] tracking-[var(--text-regular-base-tracking)] ${shine ? "panel-shine" : "text-fg-secondary"}`}
+                      className={`text-[length:var(--text-regular-base-size)] leading-[var(--text-regular-base-leading)] tracking-[var(--text-regular-base-tracking)] ${shine ? `panel-shine${block.report ? " panel-shine-fast" : ""}` : "text-fg-secondary"}`}
                     >
                       {line}
                     </p>

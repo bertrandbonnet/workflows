@@ -11,6 +11,7 @@ function cn(...parts: Array<string | false | null | undefined>) {
 }
 
 const FILLED_ICON: Record<string, string> = {
+  morning: "/card-icons/calendar-blank-fill.svg",
   overdue: "/card-icons/clock-fill.svg",
   renewal: "/card-icons/call-bell-fill.svg",
   recovery: "/card-icons/wallet-fill.svg",

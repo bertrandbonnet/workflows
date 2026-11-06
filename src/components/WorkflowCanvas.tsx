@@ -25,6 +25,7 @@ import {
   LoopNode,
   WorkflowNode,
   blockDisconnected,
+  blockHeight,
   blockOutputs,
   loopBlockData,
   loopChildPosition,
@@ -54,6 +55,117 @@ function absoluteX(node: Node<BlockData>, nodes: Node<BlockData>[]) {
     parentId = parent.parentId;
   }
   return x;
+}
+
+type BlockClip = { nodes: CanvasNode[]; edges: Edge[] };
+
+let blockClipboard: BlockClip | null = null;
+let pasteCount = 0;
+
+function isTypingTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function nodeBox(node: CanvasNode) {
+  if (node.type === "loop") {
+    const width = Number(node.style?.width ?? 0);
+    const height = Number(node.style?.height ?? 0);
+    return { w: width || 322, h: height || 146 };
+  }
+  return { w: 240, h: blockHeight(node.data) };
+}
+
+function sameParent(a: { parentId?: string }, b: { parentId?: string }) {
+  return (a.parentId ?? "") === (b.parentId ?? "");
+}
+
+function boxesOverlap(
+  a: { position: { x: number; y: number } },
+  aSize: { w: number; h: number },
+  b: { position: { x: number; y: number } },
+  bSize: { w: number; h: number },
+) {
+  return a.position.x < b.position.x + bSize.w && a.position.x + aSize.w > b.position.x && a.position.y < b.position.y + bSize.h && a.position.y + aSize.h > b.position.y;
+}
+
+function copyBlocks(selected: CanvasNode[], nodes: CanvasNode[], edges: Edge[]): BlockClip {
+  const ids = new Set(selected.map((node) => node.id));
+  const copied = nodes.filter((node) => ids.has(node.id) || (node.parentId ? ids.has(node.parentId) : false));
+  const copiedIds = new Set(copied.map((node) => node.id));
+  return {
+    nodes: copied.map((node) => ({
+      id: node.id,
+      type: node.type,
+      position: { x: node.position.x, y: node.position.y },
+      data: structuredClone(node.data),
+      ...(node.parentId ? { parentId: node.parentId } : {}),
+      ...(node.style ? { style: structuredClone(node.style) } : {}),
+    })),
+    edges: edges
+      .filter((edge) => copiedIds.has(edge.source) && copiedIds.has(edge.target))
+      .map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+        type: edge.type,
+      })),
+  };
+}
+
+function pasteBlocks(clip: BlockClip, existing: CanvasNode[], generation: number) {
+  const copiedIds = new Set(clip.nodes.map((node) => node.id));
+  const idMap = new Map(clip.nodes.map((node) => [node.id, crypto.randomUUID()]));
+  const roots = clip.nodes.filter((node) => !node.parentId || !copiedIds.has(node.parentId));
+  let minX = Infinity;
+  let maxRight = -Infinity;
+  for (const node of roots) {
+    const box = nodeBox(node);
+    minX = Math.min(minX, node.position.x);
+    maxRight = Math.max(maxRight, node.position.x + box.w);
+  }
+  const step = Math.max(maxRight - minX, 240) + 80;
+  let shiftX = step * generation;
+  let shiftY = 0;
+  const shifted = () =>
+    roots.map((node) => ({
+      parentId: node.parentId && copiedIds.has(node.parentId) ? undefined : node.parentId,
+      position: { x: node.position.x + shiftX, y: node.position.y + shiftY },
+      box: nodeBox(node),
+    }));
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const next = shifted();
+    const hit = next.some((node) =>
+      existing.some((other) => sameParent(node, other) && boxesOverlap(node, node.box, other, nodeBox(other))),
+    );
+    if (!hit) break;
+    shiftY += 96;
+  }
+  const nodes = clip.nodes.map((node) => {
+    const parentCopied = Boolean(node.parentId && copiedIds.has(node.parentId));
+    const parentId = parentCopied ? idMap.get(node.parentId!) : node.parentId;
+    return {
+      id: idMap.get(node.id)!,
+      type: node.type,
+      position: parentCopied ? { x: node.position.x, y: node.position.y } : { x: node.position.x + shiftX, y: node.position.y + shiftY },
+      data: { ...node.data, starter: false },
+      ...(parentId ? { parentId } : {}),
+      ...(node.style ? { style: structuredClone(node.style) } : {}),
+      selected: !parentCopied,
+    };
+  });
+  const edges = clip.edges.flatMap((edge) => {
+    const source = idMap.get(edge.source);
+    const target = idMap.get(edge.target);
+    if (!source || !target) return [];
+    const handle = edge.sourceHandle ? `-${edge.sourceHandle}` : "";
+    return [{ id: `e-${source}-${target}${handle}`, source, target, sourceHandle: edge.sourceHandle, targetHandle: edge.targetHandle, type: edge.type ?? "flow" }];
+  });
+  return { nodes, edges };
 }
 
 function terminalNode(nodes: Node<BlockData>[], edges: Edge[]) {
@@ -156,7 +268,7 @@ export function WorkflowCanvas({
   seed?: {
     name: string;
     description: string;
-    nodes: Node<BlockData, "block">[];
+    nodes: Node<BlockData, "block" | "loop">[];
     edges: Edge[];
     prompt?: string;
     lines?: string[];
@@ -169,6 +281,8 @@ export function WorkflowCanvas({
   const { adopt } = useCanvasHistoryActions();
   const selecting = tool === "cursor";
   const staged = Boolean(seed?.lines?.length);
+  const centerFirstBlock = Boolean(seed && !staged && seed.nodes.length === 1);
+  const centerNodeRef = useRef(centerFirstBlock ? seed?.nodes[0] : null);
   const seedRef = useRef(seed);
   seedRef.current = seed;
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>(staged ? [] : (seed?.nodes ?? initialNodes));
@@ -202,6 +316,25 @@ export function WorkflowCanvas({
     });
     return () => cancelAnimationFrame(frame);
   }, [revealed, setNodes, setEdges, setViewport, adopt]);
+  useEffect(() => {
+    const node = centerNodeRef.current;
+    if (!node) return;
+    let frame = 0;
+    let tries = 0;
+    const place = () => {
+      const pane = document.querySelector(".react-flow")?.getBoundingClientRect();
+      const panel = document.querySelector("[data-canvas-panel]")?.getBoundingClientRect();
+      if (!pane || pane.width === 0 || !panel || panel.width === 0) {
+        if (tries++ < 12) frame = requestAnimationFrame(place);
+        return;
+      }
+      const openRight = panel.height > pane.height * 0.5 ? panel.left - pane.left : pane.width;
+      const height = blockHeight(node.data);
+      void setViewport({ x: openRight / 2 - 120, y: (pane.height - height) / 2, zoom: 1 }, { duration: 0 });
+    };
+    frame = requestAnimationFrame(place);
+    return () => cancelAnimationFrame(frame);
+  }, [setViewport]);
   const onPaneClick = useCallback(() => {
     setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)));
     hideCatalog();
@@ -327,6 +460,34 @@ export function WorkflowCanvas({
     if (nodesChanged) setNodes(nextNodes);
     if (edgesChanged) setEdges(nextEdges);
   }, [nodes, edges, setNodes, setEdges]);
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  nodesRef.current = nodes;
+  edgesRef.current = edges;
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.repeat || isTypingTarget(event.target)) return;
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key !== "c" && key !== "v") return;
+      if (key === "c") {
+        const selected = nodesRef.current.filter((node) => node.selected);
+        if (selected.length === 0 || window.getSelection()?.toString()) return;
+        event.preventDefault();
+        blockClipboard = copyBlocks(selected, nodesRef.current, edgesRef.current);
+        pasteCount = 0;
+        return;
+      }
+      if (!blockClipboard) return;
+      event.preventDefault();
+      pasteCount += 1;
+      const result = pasteBlocks(blockClipboard, nodesRef.current, pasteCount);
+      setNodes((current) => [...current.map((node) => (node.selected ? { ...node, selected: false } : node)), ...result.nodes]);
+      if (result.edges.length > 0) setEdges((current) => [...current, ...result.edges]);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [setNodes, setEdges]);
   const addBlock = useCallback(
     (option: TriggerOption) => {
       const source = active ?? terminalNode(nodes, edges);
@@ -522,7 +683,7 @@ export function WorkflowCanvas({
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
-        fitView={!staged}
+        fitView={!staged && !centerFirstBlock}
         fitViewOptions={{ minZoom: 1, maxZoom: 1 }}
         minZoom={MIN_ZOOM / 100}
         maxZoom={MAX_ZOOM / 100}

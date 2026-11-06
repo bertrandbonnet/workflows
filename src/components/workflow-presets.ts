@@ -22,7 +22,7 @@ export type WorkflowPreset = {
   description: string;
   card: string;
   lines: string[];
-  nodes: Node<BlockData, "block">[];
+  nodes: Node<BlockData, "block" | "loop">[];
   edges: Edge[];
 };
 
@@ -56,6 +56,124 @@ function chain(
     type: "flow",
   }));
   return { nodes, edges };
+}
+
+const MORNING_CONDITIONS = JSON.stringify([
+  { id: "days", field: "invoice.days", operator: "gt", value: "7" },
+  { id: "amount", field: "invoice.amount", operator: "gt", value: "1000" },
+]);
+
+function morningCheck(): Pick<WorkflowPreset, "nodes" | "edges"> {
+  const loop = { width: 322, height: 210 };
+  return {
+    nodes: [
+      {
+        id: "morning-schedule",
+        type: "block",
+        position: { x: 0, y: 0 },
+        selected: true,
+        data: {
+          title: "On a schedule",
+          summary: "Every weekday at 09:00",
+          description: "Weekday morning check for invoices that slipped past their due date.",
+          trigger: true,
+          status: "ok",
+          icon: "calendar-blank",
+          tone: "orange",
+          frequency: "Every weekday",
+          time: "09:00",
+          timezone: "Europe/Paris",
+        },
+      },
+      {
+        id: "morning-find",
+        type: "block",
+        position: { x: 320, y: 20 },
+        data: {
+          title: "Find records",
+          summary: "Invoices · Unpaid and past due",
+          description: "The invoices this run walks through, one customer at a time.",
+          input: true,
+          status: "ok",
+          icon: "magnifying-glass",
+          tone: "orange",
+          config: { record: "Invoices", filter: "Unpaid and past due" },
+        },
+      },
+      {
+        id: "morning-loop",
+        type: "loop",
+        position: { x: 640, y: 20 },
+        style: loop,
+        data: {
+          title: "Loop",
+          summary: "Every late invoice is handled",
+          description: "Take the invoices one by one.",
+          input: true,
+          status: "ok",
+          icon: "repeat",
+          tone: "purple",
+          loop: true,
+          config: { until: "Every late invoice is handled" },
+        },
+      },
+      {
+        id: "morning-if",
+        type: "block",
+        parentId: "morning-loop",
+        position: { x: 41, y: 41 },
+        data: {
+          title: "If / else",
+          summary: "Invoice → Days overdue is greater than 7, Invoice → Amount due is greater than 1000",
+          description: "Only ping the team when the invoice is both old and large.",
+          input: true,
+          status: "ok",
+          icon: "git-branch",
+          tone: "purple",
+          config: { conditions: MORNING_CONDITIONS },
+        },
+      },
+      {
+        id: "morning-slack",
+        type: "block",
+        position: { x: 1001, y: 47 },
+        data: {
+          title: "Slack",
+          summary: "Message #billing",
+          description: "The alert finance sees for an invoice worth chasing.",
+          input: true,
+          status: "ok",
+          icon: "slack",
+          tone: "grey",
+          config: {
+            channel: "#billing",
+            message: "{{customer}} — invoice {{amount}} is {{days}} days overdue.",
+          },
+        },
+      },
+      {
+        id: "morning-stop",
+        type: "block",
+        position: { x: 1001, y: 203 },
+        data: {
+          title: "Stop",
+          summary: "Not worth a ping",
+          description: "Skip invoices that are recent or small.",
+          input: true,
+          status: "ok",
+          icon: "stop-circle",
+          tone: "grey",
+          config: { reason: "Fewer than 7 days late, or under €1,000" },
+        },
+      },
+    ],
+    edges: [
+      { id: "e-morning-schedule", source: "morning-schedule", target: "morning-find", type: "flow" },
+      { id: "e-morning-find", source: "morning-find", target: "morning-loop", type: "flow" },
+      { id: "e-morning-true", source: "morning-if", target: "morning-slack", sourceHandle: "true", type: "flow" },
+      { id: "e-morning-false", source: "morning-if", target: "morning-stop", sourceHandle: "false", type: "flow" },
+    ],
+  };
 }
 
 export const WORKFLOW_PRESETS: WorkflowPreset[] = [
@@ -133,6 +251,26 @@ export const WORKFLOW_PRESETS: WorkflowPreset[] = [
       { title: "Wait for event", summary: "Retry the payment", icon: "hourglass", tone: "turquoise" },
       { title: "Update subscription", summary: "Pause if it fails", icon: "arrows-clockwise", tone: "turquoise" },
     ]),
+  },
+  {
+    id: "morning",
+    family: "paid",
+    label: "Morning invoice check",
+    icon: "/block-icons/calendar-blank.svg",
+    tint: "var(--yellow-bg-3)",
+    name: "Morning invoice check",
+    description: "Each weekday, alert #billing only for invoices that are truly late",
+    card: "Walk late invoices every morning, and ping Slack only when one is worth it.",
+    prompt:
+      "Every weekday at 9:00, find unpaid invoices that are past due. For each one, if it is more than 7 days late and over €1,000, send a Slack message to #billing. Otherwise stop.",
+    lines: [
+      "Starting from a weekday morning check at 9:00.",
+      "Unpaid invoices past their due date are gathered first.",
+      "Each invoice is checked on its own.",
+      "Only those over 7 days and €1,000 land in #billing. The rest stop.",
+      "The workflow is ready.",
+    ],
+    ...morningCheck(),
   },
   {
     id: "quote",
