@@ -1,26 +1,32 @@
 "use client";
 
-import { FormEvent, useLayoutEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Background, BackgroundVariant, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Button } from "@/components/Button";
 import { Plus } from "@/components/icons";
 import { EditorTabs } from "@/components/ProductShell";
 import { TemplatePanel } from "@/components/TemplatePanel";
+import { TriggerMenu, type TriggerOption } from "@/components/TriggerMenu";
 import { WORKFLOW_PRESETS, type WorkflowPreset } from "@/components/workflow-presets";
 
 export function NewWorkflow({
   onStart,
   onGenerate,
 }: {
-  onStart: () => void;
+  onStart: (trigger?: TriggerOption) => void;
   onGenerate: (preset: WorkflowPreset) => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [catalog, setCatalog] = useState(false);
+  const [triggers, setTriggers] = useState(false);
+  const [menuBox, setMenuBox] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const [reserve, setReserve] = useState(0);
   const host = useRef<HTMLDivElement>(null);
+  const startRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const root = host.current;
@@ -38,6 +44,36 @@ export function NewWorkflow({
     place();
     return () => observer.disconnect();
   }, [catalog]);
+
+  useEffect(() => {
+    if (!triggers) return;
+    const place = () => {
+      const rect = startRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = 320;
+      const left = Math.min(Math.max(8, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 8);
+      const below = window.innerHeight - rect.bottom - 16;
+      const above = rect.top - 16;
+      const openUp = below < 280 && above > below;
+      const maxHeight = Math.max(160, Math.min(480, openUp ? above : below));
+      const top = openUp ? Math.max(8, rect.top - 8 - maxHeight) : rect.bottom + 8;
+      setMenuBox({ top, left, maxHeight });
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (startRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setTriggers(false);
+    };
+    place();
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [triggers]);
 
   function fill(preset: WorkflowPreset) {
     setActiveId(preset.id);
@@ -145,9 +181,34 @@ export function NewWorkflow({
             <span className="text-[length:var(--text-bold-base-size)] leading-[var(--text-bold-base-leading)] font-medium tracking-[var(--text-bold-base-tracking)] text-[var(--grey-fg-tertiary)]">
               or
             </span>
-            <Button tone="grey" type="button" leadingIcon={<Plus />} onClick={onStart}>
-              Start from scratch
-            </Button>
+            <div ref={startRef}>
+              <Button
+                tone="grey"
+                type="button"
+                leadingIcon={<Plus />}
+                aria-expanded={triggers}
+                aria-haspopup="dialog"
+                onClick={() => setTriggers((open) => !open)}
+              >
+                Start from scratch
+              </Button>
+            </div>
+            {triggers && menuBox
+              ? createPortal(
+                  <div ref={menuRef} className="fixed z-50" style={{ top: menuBox.top, left: menuBox.left }}>
+                    <TriggerMenu
+                      triggersOnly
+                      maxHeight={menuBox.maxHeight}
+                      onClose={() => setTriggers(false)}
+                      onSelect={(trigger) => {
+                        setTriggers(false);
+                        onStart(trigger);
+                      }}
+                    />
+                  </div>,
+                  document.body,
+                )
+              : null}
           </div>
         </div>
       </div>

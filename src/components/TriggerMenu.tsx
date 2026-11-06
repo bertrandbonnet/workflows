@@ -252,11 +252,15 @@ export function BlockGlyph({
 export function TriggerMenu({
   onSelect,
   embedded = false,
+  triggersOnly = false,
   onClose,
+  maxHeight,
 }: {
   onSelect: (option: TriggerOption) => void;
   embedded?: boolean;
+  triggersOnly?: boolean;
   onClose?: () => void;
+  maxHeight?: number;
 }) {
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<(typeof SCOPES)[number]["value"]>("all");
@@ -277,7 +281,7 @@ export function TriggerMenu({
         : scope === "triggers"
           ? TRIGGER_GROUPS
           : GROUPS.filter((group) => group.title === "Integration");
-    const visible = embedded ? source : GROUPS;
+    const visible = triggersOnly ? TRIGGER_GROUPS : embedded ? source : GROUPS;
     const needle = query.trim().toLowerCase();
     if (!needle) return visible;
     return visible
@@ -289,7 +293,7 @@ export function TriggerMenu({
         ),
       }))
       .filter((group) => group.items.length > 0);
-  }, [embedded, query, scope]);
+  }, [embedded, query, scope, triggersOnly]);
 
   const options: TriggerOption[] = groups.flatMap((group) =>
     group.items.map((item) => ({ ...item, group: group.title, tone: item.tone ?? group.tone })),
@@ -338,8 +342,9 @@ export function TriggerMenu({
           ? "min-h-0 flex-1"
           : "w-[320px] rounded-[8px] border-[0.5px] border-solid border-[var(--grey-bo-2,#e2dfdd)] shadow-[var(--shadow-light-md)]",
       )}
+      style={maxHeight ? { maxHeight } : undefined}
     >
-      <div className={cn("shrink-0", embedded ? "flex flex-col gap-2 p-4" : "px-2 pt-2 pb-0")}>
+      <div className={cn("shrink-0", embedded ? "flex flex-col gap-2 p-4" : triggersOnly ? "px-2 pt-2 pb-4" : "px-2 pt-2 pb-0")}>
         <label className="flex h-7 items-center gap-[6px] rounded-[6px] border-[0.5px] border-solid border-[var(--grey-bo-3,#dbd8d6)] bg-[var(--grey-bg-action,#ffffff)] px-2 text-[var(--grey-fg-secondary,#78716c)] shadow-[var(--shadow-light-sm)] focus-within:border-[var(--grey-bo-3-hover,#cfccc8)]">
           <MagnifyingGlass />
           <input
@@ -352,17 +357,22 @@ export function TriggerMenu({
         </label>
         {embedded ? <TabSelector label="Blocks" value={scope} options={SCOPES} onChange={setScope} /> : null}
       </div>
-      <div ref={listRef} role="listbox" className={cn("overflow-y-auto", embedded ? "min-h-0 flex-1" : "max-h-[480px]")}>
-        {groups.map((group, groupIndex) => (
+      <div ref={listRef} role="listbox" className={cn("overflow-y-auto", embedded || maxHeight ? "min-h-0 flex-1" : "max-h-[480px]")}>
+        {groups.map((group, groupIndex) => {
+          const triggerFamily = group.items.every((item) => item.trigger);
+          const followsTriggerFamily =
+            triggerFamily && groupIndex > 0 && groups[groupIndex - 1]?.items.every((item) => item.trigger);
+          const firstTriggerHeading = triggersOnly && group.title === "Invoices";
+          return (
           <div key={`${group.title}-${groupIndex}`}>
-            {groupIndex > 0 && !(groups[groupIndex - 1]?.items.every((item) => item.trigger) && group.items.every((item) => item.trigger)) ? (
+            {groupIndex > 0 && !followsTriggerFamily ? (
               <div className="h-[0.5px] bg-[var(--grey-bo-1,#eeeceb)]" />
             ) : null}
-            <div className={cn("flex flex-col px-2 pb-2", embedded ? "pt-0" : "pt-2")}>
+            <div className={cn("flex flex-col px-2 pb-2", embedded || firstTriggerHeading || followsTriggerFamily ? "pt-0" : "pt-2")}>
               <div
                 className={cn(
                   "pr-1 pb-1 pl-2 text-[length:var(--text-bold-tiny-size,11px)] leading-[var(--text-bold-tiny-leading,14px)] font-medium tracking-[-0.01em] text-[var(--grey-fg-tertiary,#999390)]",
-                  embedded && groupIndex === 0 ? "pt-0" : "pt-2",
+                  (embedded && groupIndex === 0) || firstTriggerHeading ? "pt-0" : followsTriggerFamily ? "pt-1" : "pt-2",
                 )}
               >
                 {group.title}
@@ -408,7 +418,8 @@ export function TriggerMenu({
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

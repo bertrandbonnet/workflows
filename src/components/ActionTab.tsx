@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useOnViewportChange, useReactFlow } from "@xyflow/react";
+import { useOnViewportChange, useReactFlow, useStore } from "@xyflow/react";
+import { useCanvasHistory } from "@/components/canvas-history";
 import { useBlockCatalog } from "@/components/block-catalog";
 import { useCanvasTool } from "@/components/canvas-tool";
 import { Button } from "@/components/Button";
+import { blocksNeedFix, nodesOverlap, repairWorkflow, tidyNodes } from "@/components/tidy-layout";
 import { MAX_ZOOM, MIN_ZOOM, ZOOM_STEP, ZoomProgress } from "@/components/ZoomSlider";
 import { ZoomMenu } from "@/components/ZoomMenu";
 import {
   ArrowUUpLeft,
   ArrowUUpRight,
   Broom,
+  MagicWand,
   CaretDown,
   Cursor,
   Hand,
@@ -44,8 +47,9 @@ const zoomMotion = `
 
 export function ActionTab() {
   const { tool, setTool } = useCanvasTool();
+  const history = useCanvasHistory();
   const catalog = useBlockCatalog();
-  const { zoomTo, fitView } = useReactFlow();
+  const { zoomTo, fitView, getNodes, getEdges, setNodes, setEdges, getViewport, setViewport } = useReactFlow();
   const [zoom, setZoom] = useState(100);
   const [menuOpen, setMenuOpen] = useState(false);
   const [zoomPhase, setZoomPhase] = useState<ZoomPhase>("off");
@@ -55,6 +59,11 @@ export function ActionTab() {
   const exitTimer = useRef<number | null>(null);
   const revealRef = useRef<() => void>(() => {});
   const applyZoomRef = useRef<(next: number) => void>(() => {});
+  const tidyRef = useRef<() => void>(() => {});
+  const showTidyRef = useRef(false);
+  const showTidy = useStore((state) => nodesOverlap(state.nodes));
+  const showFix = useStore((state) => blocksNeedFix(state.nodes, state.edges));
+  showTidyRef.current = showTidy && !showFix;
   const viewportReady = useRef(false);
 
   function revealZoom() {
@@ -75,6 +84,41 @@ export function ActionTab() {
   }
 
   revealRef.current = revealZoom;
+
+  function showGraph(bounds: { top: number; left: number; height: number }) {
+    const pane = document.querySelector(".react-flow")?.getBoundingClientRect();
+    if (!pane) return;
+    const y = bounds.height + 96 < pane.height ? (pane.height - bounds.height) / 2 - bounds.top : 48 - bounds.top;
+    const { zoom } = getViewport();
+    void setViewport({ x: 72 - bounds.left, y, zoom }, { duration: 180 });
+  }
+
+  function fix() {
+    const nodes = getNodes();
+    const edges = getEdges();
+    const result = repairWorkflow(nodes, edges);
+    if (result) {
+      setNodes(result.nodes);
+      setEdges(result.edges);
+      showGraph(result.bounds);
+      return;
+    }
+    const laid = tidyNodes(nodes, edges);
+    if (!laid) return;
+    setNodes(laid.nodes);
+    showGraph(laid.bounds);
+  }
+
+  function tidy() {
+    const nodes = getNodes();
+    if (!nodesOverlap(nodes)) return;
+    const result = tidyNodes(nodes, getEdges());
+    if (!result) return;
+    setNodes(result.nodes);
+    showGraph(result.bounds);
+  }
+
+  tidyRef.current = tidy;
 
   function applyZoom(next: number) {
     const value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(next)));
@@ -114,7 +158,6 @@ export function ActionTab() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!event.metaKey || event.altKey || event.ctrlKey) return;
       const target = event.target;
       if (
         target instanceof HTMLElement &&
@@ -124,6 +167,15 @@ export function ActionTab() {
       ) {
         return;
       }
+
+      if (!event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey && event.key.toLowerCase() === "t") {
+        if (!showTidyRef.current) return;
+        event.preventDefault();
+        tidyRef.current();
+        return;
+      }
+
+      if (!event.metaKey || event.altKey || event.ctrlKey) return;
 
       const zoomIn = event.key === "+" || event.key === "=" || event.code === "NumpadAdd";
       const zoomOut = event.key === "-" || event.key === "_" || event.code === "NumpadSubtract";
@@ -218,15 +270,38 @@ export function ActionTab() {
         <Button kind="button" tone="grey" leadingIcon={<Plus />} onClick={catalog.show}>
           Add block
         </Button>
-        <Button kind="icon" tone="grey" tooltip="Undo" hotkey="Z" aria-label="Undo">
+        <Button
+          kind="icon"
+          tone="grey"
+          tooltip="Undo"
+          hotkey="Z"
+          aria-label="Undo"
+          disabled={!history.canUndo}
+          onClick={history.undo}
+        >
           <ArrowUUpLeft />
         </Button>
-        <Button kind="icon" tone="grey" tooltip="Redo" hotkey="Y" aria-label="Redo">
+        <Button
+          kind="icon"
+          tone="grey"
+          tooltip="Redo"
+          hotkey="Y"
+          aria-label="Redo"
+          disabled={!history.canRedo}
+          onClick={history.redo}
+        >
           <ArrowUUpRight />
         </Button>
-        <Button kind="icon" tone="grey" tooltip="Tidy up" hotkey="T" aria-label="Tidy up">
-          <Broom />
-        </Button>
+        {showFix ? (
+          <Button kind="icon" tone="grey" tooltip="Fix with AI" aria-label="Fix with AI" onClick={fix}>
+            <MagicWand />
+          </Button>
+        ) : null}
+        {showTidy && !showFix ? (
+          <Button kind="icon" tone="grey" tooltip="Tidy up" hotkey="T" aria-label="Tidy up" onClick={tidy}>
+            <Broom />
+          </Button>
+        ) : null}
       </div>
     </div>
   );

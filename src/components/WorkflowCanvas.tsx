@@ -15,6 +15,7 @@ import {
   type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { useCanvasHistoryActions } from "@/components/canvas-history";
 import { useBlockCatalog } from "@/components/block-catalog";
 import { useCanvasTool } from "@/components/canvas-tool";
 import { SidePanel, isScheduleBlock, type AttentionItem, type WorkflowDetails } from "@/components/SidePanel";
@@ -23,9 +24,14 @@ import { MAX_ZOOM, MIN_ZOOM } from "@/components/ZoomSlider";
 import {
   LoopNode,
   WorkflowNode,
+  blockDisconnected,
+  blockOutputs,
   loopBlockData,
   loopChildPosition,
   loopFrame,
+  loopFrameFor,
+  placeBranchY,
+  outputCenter,
   type BlockData,
 } from "@/components/WorkflowNode";
 import { WorkflowConnectionLine, WorkflowEdge, workflowEdgeCss } from "@/components/WorkflowEdge";
@@ -158,7 +164,9 @@ export function WorkflowCanvas({
 }) {
   const { tool } = useCanvasTool();
   const { open: catalogOpen, show: showCatalog, hide: hideCatalog } = useBlockCatalog();
+  const branchRef = useRef<string | undefined>(undefined);
   const { getViewport, setViewport } = useReactFlow();
+  const { adopt } = useCanvasHistoryActions();
   const selecting = tool === "cursor";
   const staged = Boolean(seed?.lines?.length);
   const seedRef = useRef(seed);
@@ -186,13 +194,14 @@ export function WorkflowCanvas({
     if (!revealed || !current?.lines?.length) return;
     setNodes(current.nodes);
     setEdges(current.edges);
+    adopt();
     const frame = requestAnimationFrame(() => {
       const pane = document.querySelector(".react-flow")?.getBoundingClientRect();
       const y = pane ? Math.max(48, (pane.height - 64) / 2) : 120;
       void setViewport({ x: 72, y, zoom: 1 }, { duration: 0 });
     });
     return () => cancelAnimationFrame(frame);
-  }, [revealed, setNodes, setEdges, setViewport]);
+  }, [revealed, setNodes, setEdges, setViewport, adopt]);
   const onPaneClick = useCallback(() => {
     setNodes((current) => current.map((node) => (node.selected ? { ...node, selected: false } : node)));
     hideCatalog();
@@ -205,7 +214,11 @@ export function WorkflowCanvas({
       const outgoing = edges.some((edge) => edge.source === node.id);
       const stored = node.data.status;
       if (stored === "disabled") return [];
-      const disconnected = node.parentId ? false : node.data.trigger ? !outgoing : !incoming;
+      const disconnected = blockDisconnected(node.data, {
+        incoming,
+        outgoing,
+        nested: Boolean(node.parentId),
+      });
       const tone = stored === "error" ? "error" : stored === "configure" || disconnected ? "configure" : null;
       if (!tone) return [];
       return [
@@ -231,8 +244,17 @@ export function WorkflowCanvas({
           return { ...node, data };
         }),
       );
+      if (patch.config && "cases" in patch.config) {
+        const outputs = blockOutputs({ ...active.data, ...patch });
+        const ids = new Set(outputs?.map((output) => output.id));
+        setEdges((current) =>
+          current.filter(
+            (edge) => edge.source !== active.id || !edge.sourceHandle || ids.has(edge.sourceHandle),
+          ),
+        );
+      }
     },
-    [active, setNodes],
+    [active, setNodes, setEdges],
   );
   const selectBlock = useCallback(
     (id: string) => {
@@ -280,7 +302,7 @@ export function WorkflowCanvas({
       const children = nextNodes
         .filter((node) => node.parentId === loop.id)
         .sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y);
-      const frame = loopFrame(children.length);
+      const frame = loopFrameFor(children);
       const width = Number.parseFloat(String(loop.style?.width ?? 0));
       const height = Number.parseFloat(String(loop.style?.height ?? 0));
       if (Math.abs(width - frame.width) < 0.5 && Math.abs(height - frame.height) < 0.5) continue;
@@ -319,6 +341,15 @@ export function WorkflowCanvas({
         trigger: option.trigger,
       };
       const loopId = source.type === "loop" ? source.id : source.parentId;
+      const outputs = blockOutputs(source.data);
+      const requested = branchRef.current;
+      branchRef.current = undefined;
+      const sourceHandle = outputs
+        ? outputs.some((output) => output.id === requested)
+          ? requested
+          : (outputs.find((output) => !edges.some((edge) => edge.source === source.id && edge.sourceHandle === output.id))?.id ??
+            outputs[0]?.id)
+        : undefined;
 
       if (option.title === "Loop") {
         const anchor = source.parentId ? (nodes.find((node) => node.id === source.parentId) ?? source) : source;
@@ -337,9 +368,18 @@ export function WorkflowCanvas({
             data: loopBlockData(),
           },
         ]);
+        const fromSource = anchor.id === source.id;
         setEdges((current) => [
-          ...current.filter((edge) => edge.source !== anchor.id),
-          { id: `e-${anchor.id}-${nextId}`, source: anchor.id, target: nextId, type: "flow" },
+          ...current.filter(
+            (edge) => edge.source !== anchor.id || (fromSource && sourceHandle ? edge.sourceHandle !== sourceHandle : false),
+          ),
+          {
+            id: `e-${anchor.id}-${nextId}`,
+            source: anchor.id,
+            sourceHandle: fromSource ? sourceHandle : undefined,
+            target: nextId,
+            type: "flow",
+          },
         ]);
         hideCatalog();
         return;
@@ -347,7 +387,7 @@ export function WorkflowCanvas({
 
       if (loopId) {
         const siblings = nodes.filter((node) => node.parentId === loopId);
-        const frame = loopFrame(siblings.length + 1);
+        const frame = loopFrameFor([...siblings, { data: blockData }]);
         const tail = [...siblings].reverse().find((node) => !edges.some((edge) => edge.source === node.id));
         setNodes((current) => [
           ...current.map((node) =>
@@ -381,9 +421,17 @@ export function WorkflowCanvas({
       const cardEl = nodeEl?.querySelector<HTMLElement>("span.relative");
       const cardShift =
         nodeEl && cardEl ? (cardEl.getBoundingClientRect().top - nodeEl.getBoundingClientRect().top) / zoom : 0;
+      const outputIndex = sourceHandle ? outputs!.findIndex((output) => output.id === sourceHandle) : -1;
       let x = source.position.x + 320;
-      const y = source.position.y + cardShift;
-      while (nodes.some((node) => Math.abs(node.position.x - x) < 80 && Math.abs(node.position.y - y) < 40)) x += 320;
+      let y =
+        outputIndex >= 0
+          ? source.position.y + outputCenter(outputIndex, Boolean(source.data.trigger)) - (option.trigger ? 52 : 32)
+          : source.position.y + cardShift;
+      if (outputIndex >= 0) {
+        y = placeBranchY(nodes, x, y, { title: option.title, trigger: option.trigger }, outputIndex, outputs!.length);
+      } else {
+        while (nodes.some((node) => Math.abs(node.position.x - x) < 200 && Math.abs(node.position.y - y) < 40)) x += 320;
+      }
       setNodes((current) => [
         ...current.map((node) => ({ ...node, selected: false, className: undefined })),
         {
@@ -395,8 +443,8 @@ export function WorkflowCanvas({
         },
       ]);
       setEdges((current) => [
-        ...current.filter((edge) => edge.source !== source.id),
-        { id: `e-${source.id}-${nextId}`, source: source.id, target: nextId, type: "flow" },
+        ...current.filter((edge) => edge.source !== source.id || (sourceHandle ? edge.sourceHandle !== sourceHandle : false)),
+        { id: `e-${source.id}-${nextId}`, source: source.id, sourceHandle, target: nextId, type: "flow" },
       ]);
       hideCatalog();
     },
@@ -448,7 +496,7 @@ export function WorkflowCanvas({
         .react-flow__node {
           overflow: visible;
         }
-        .react-flow__node.attention-focus span.h-16 {
+        .react-flow__node.attention-focus .block-card {
           outline: none;
           border-color: #95c3ee !important;
           box-shadow: 0 0 0 2px #95c3ee !important;
@@ -515,11 +563,11 @@ export function WorkflowCanvas({
           active
             ? blockIssue(
                 active.data,
-                active.parentId
-                  ? false
-                  : active.data.trigger
-                    ? !edges.some((edge) => edge.source === active.id)
-                    : !edges.some((edge) => edge.target === active.id),
+                blockDisconnected(active.data, {
+                  incoming: edges.some((edge) => edge.target === active.id),
+                  outgoing: edges.some((edge) => edge.source === active.id),
+                  nested: Boolean(active.parentId),
+                }),
               )
             : null
         }
@@ -527,11 +575,25 @@ export function WorkflowCanvas({
         catalog={catalogOpen}
         nextLabel={
           active
-            ? (nodes.find((node) => node.id === edges.find((edge) => edge.source === active.id)?.target)?.data.title ??
-              null)
+            ? (nodes.find((node) => node.id === edges.find((edge) => edge.source === active.id && !edge.sourceHandle)?.target)?.data
+                .title ?? null)
             : null
         }
-        onOpenCatalog={showCatalog}
+        nextByOutput={
+          active && blockOutputs(active.data)
+            ? Object.fromEntries(
+                blockOutputs(active.data)!.map((output) => [
+                  output.id,
+                  nodes.find((node) => node.id === edges.find((edge) => edge.source === active.id && edge.sourceHandle === output.id)?.target)
+                    ?.data.title ?? null,
+                ]),
+              )
+            : null
+        }
+        onOpenCatalog={(outputId) => {
+          branchRef.current = outputId;
+          showCatalog();
+        }}
         onCloseCatalog={hideCatalog}
         onPickBlock={addBlock}
         assistant={

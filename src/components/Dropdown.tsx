@@ -17,16 +17,51 @@ function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+export function GreyIcon({ src }: { src: string }) {
+  return (
+    <span
+      aria-hidden
+      className="block size-4 max-w-none shrink-0 bg-[var(--grey-fg-secondary,#78716c)]"
+      style={{
+        maskImage: `url(${src})`,
+        WebkitMaskImage: `url(${src})`,
+        maskSize: "16px 16px",
+        WebkitMaskSize: "16px 16px",
+        maskRepeat: "no-repeat",
+        WebkitMaskRepeat: "no-repeat",
+        maskPosition: "center",
+        WebkitMaskPosition: "center",
+      }}
+    />
+  );
+}
+
+function OptionIcon({ src, grey }: { src: string; grey: boolean }) {
+  if (grey) return <GreyIcon src={src} />;
+  return (
+    <img
+      src={src}
+      width={16}
+      height={16}
+      alt=""
+      className="block size-4 max-w-none shrink-0"
+      style={{ width: 16, height: 16 }}
+    />
+  );
+}
+
 export function Dropdown({
   value,
   placeholder,
   options,
   onChange,
+  greyIcons = false,
 }: {
   value: string;
   placeholder: string;
   options: DropdownOption[];
   onChange: (value: string) => void;
+  greyIcons?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [box, setBox] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -79,16 +114,7 @@ export function Dropdown({
           selected ? "text-[var(--grey-fg-primary,#44403c)]" : "text-[var(--grey-fg-tertiary,#999390)]",
         )}
       >
-        {selected?.icon ? (
-          <img
-            src={selected.icon}
-            width={16}
-            height={16}
-            alt=""
-            className="block size-4 max-w-none shrink-0"
-            style={{ width: 16, height: 16 }}
-          />
-        ) : null}
+        {selected?.icon ? <OptionIcon src={selected.icon} grey={greyIcons} /> : null}
         <span className="min-w-0 flex-1 truncate">{selected?.label ?? placeholder}</span>
         <span className="flex shrink-0 text-[var(--grey-fg-secondary,#78716c)]">
           <CaretDown />
@@ -124,16 +150,7 @@ export function Dropdown({
                           : "hover:bg-[var(--grey-bg-2,#f8f7f7)]",
                       )}
                     >
-                      {option.icon ? (
-                        <img
-                          src={option.icon}
-                          width={16}
-                          height={16}
-                          alt=""
-                          className="block size-4 max-w-none shrink-0"
-                          style={{ width: 16, height: 16 }}
-                        />
-                      ) : null}
+                      {option.icon ? <OptionIcon src={option.icon} grey={greyIcons} /> : null}
                       <span className="min-w-0 flex-1 truncate">{option.label}</span>
                     </button>
                   );

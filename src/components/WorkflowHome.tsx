@@ -1,15 +1,37 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { ReactFlowProvider } from "@xyflow/react";
+import { ReactFlowProvider, type Node } from "@xyflow/react";
 import { ActionTab } from "@/components/ActionTab";
 import { BlockCatalogProvider } from "@/components/block-catalog";
+import { CanvasHistoryProvider } from "@/components/canvas-history";
 import { CanvasToolProvider } from "@/components/canvas-tool";
 import { FieldBackdrop } from "@/components/FieldBackdrop";
 import { NewWorkflow } from "@/components/NewWorkflow";
 import { EditorTabs, ProductSidebar, WorkflowHeader } from "@/components/ProductShell";
+import type { TriggerOption } from "@/components/TriggerMenu";
 import { WorkflowCanvas } from "@/components/WorkflowCanvas";
+import type { BlockData } from "@/components/WorkflowNode";
 import type { WorkflowPreset } from "@/components/workflow-presets";
+
+function triggerNode(trigger: TriggerOption): Node<BlockData, "block"> {
+  return {
+    id: crypto.randomUUID(),
+    type: "block",
+    position: { x: 0, y: 0 },
+    selected: true,
+    data: {
+      title: trigger.title,
+      summary: trigger.description,
+      trigger: true,
+      input: true,
+      starter: true,
+      status: "ok",
+      icon: trigger.icon,
+      tone: trigger.tone,
+    },
+  };
+}
 
 function ActionBarSlot() {
   const slot = useRef<HTMLDivElement>(null);
@@ -79,6 +101,7 @@ function ActionBarSlot() {
 export function WorkflowHome() {
   const [phase, setPhase] = useState<"compose" | "editor">("compose");
   const [preset, setPreset] = useState<WorkflowPreset | null>(null);
+  const [scratch, setScratch] = useState<Node<BlockData, "block"> | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [workflowName, setWorkflowName] = useState("Untitled");
 
@@ -92,11 +115,12 @@ export function WorkflowHome() {
             <CanvasToolProvider>
               <BlockCatalogProvider>
                 <ReactFlowProvider>
+                  <CanvasHistoryProvider>
                   <div className="relative min-h-0 flex-1">
                     <FieldBackdrop>
                       <div className="absolute inset-0">
                         <WorkflowCanvas
-                          key={preset?.id ?? "scratch"}
+                          key={preset?.id ?? scratch?.id ?? "scratch"}
                           revealed={revealed}
                           onReveal={() => setRevealed(true)}
                           onNameChange={setWorkflowName}
@@ -110,7 +134,14 @@ export function WorkflowHome() {
                                   prompt: preset.prompt,
                                   lines: preset.lines,
                                 }
-                              : undefined
+                              : scratch
+                                ? {
+                                    name: "Untitled",
+                                    description: "",
+                                    nodes: [scratch],
+                                    edges: [],
+                                  }
+                                : undefined
                           }
                         />
                       </div>
@@ -122,18 +153,22 @@ export function WorkflowHome() {
                       <ActionBarSlot />
                     </FieldBackdrop>
                   </div>
+                  </CanvasHistoryProvider>
                 </ReactFlowProvider>
               </BlockCatalogProvider>
             </CanvasToolProvider>
           ) : (
             <div className="min-h-0 flex-1">
               <NewWorkflow
-                onStart={() => {
+                onStart={(trigger) => {
                   setPreset(null);
+                  setScratch(trigger ? triggerNode(trigger) : null);
                   setRevealed(false);
+                  setWorkflowName(trigger ? "Untitled" : "Overdue invoice reminders");
                   setPhase("editor");
                 }}
                 onGenerate={(next) => {
+                  setScratch(null);
                   setRevealed(false);
                   setPreset(next);
                   setPhase("editor");
